@@ -40,5 +40,6 @@ export 'src/pocketbase/services/realtime.dart';
 export 'src/pocketbase/services/settings.dart';
 export 'src/pocketbase/services/service.dart';
 export 'src/pocketbase/stores/auth.dart';
+export 'src/pocketbase/extensions/record_state.dart';
 
 export 'package:pocketbase/pocketbase.dart';
