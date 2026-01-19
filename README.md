@@ -26,6 +26,7 @@ This library extends the official PocketBase Dart SDK to provide a seamless offl
     - [Single Relations (maxSelect = 1)](#single-relations-maxselect--1)
     - [Multi Relations (maxSelect > 1)](#multi-relations-maxselect--1)
     - [Nested (Multi-Level) Expansion](#nested-multi-level-expansion)
+  - [Sync Progress](#sync-progress)
   - [Creating and Updating Records](#creating-and-updating-records)
   - [Batch Requests](#batch-requests)
   - [Local Full-Text Search](#local-full-text-search)
@@ -317,6 +318,45 @@ final avatar = post.get<String>('expand.author.expand.profile.avatar');
 ```
 
 > **Note**: This works identically whether the data comes from the network or the local cache, ensuring a consistent API across online and offline scenarios.
+
+### Sync Progress
+
+You can stream overall sync progress across all collections and show a UI progress indicator:
+
+```dart
+// Listen for global sync progress across all collections
+final sub = client.syncProgress().listen((p) {
+  final percent = (p.percent * 100).toStringAsFixed(0);
+  debugPrint('Sync: ${p.completed}/${p.total} ($percent%) state=${p.state}');
+});
+
+// Optional: sync only specific collections
+// final sub = client.syncProgress(services: ['posts', 'comments']).listen(...);
+```
+
+Flutter UI example:
+
+```dart
+StreamBuilder<SyncProgress>(
+  stream: client.syncProgress(),
+  builder: (context, snapshot) {
+    final data = snapshot.data;
+    if (data == null) return const SizedBox.shrink();
+    return Column(
+      children: [
+        LinearProgressIndicator(value: data.percent),
+        Text('Sync ${data.completed}/${data.total}'),
+      ],
+    );
+  },
+);
+```
+
+To await full completion (no progress updates):
+
+```dart
+await client.syncCompleted;
+```
 
 ### Creating and Updating Records
 

@@ -98,6 +98,182 @@ class $PocketBase extends PocketBase with WidgetsBindingObserver {
   // Public getter to await sync completion
   Future<void> get syncCompleted => _syncCompleter?.future ?? Future.value();
 
+  /// Emits overall sync progress across all collections with pending changes.
+  ///
+  /// This is useful for showing a UI progress indicator (e.g. "Syncing 3/12").
+  /// If [services] is provided, only those collections are included.
+  ///
+  /// Notes:
+  /// - Progress is based on pending local records (synced = false, noSync != true).
+  /// - Emits [SyncState.idle] if there is nothing to sync.
+  /// - Emits [SyncState.completed] when all retries finish.
+  Stream<SyncProgress> syncProgress({List<String>? services}) {
+    final subscriptions = <StreamSubscription>[];
+    late final StreamController<SyncProgress> controller;
+
+    controller = StreamController<SyncProgress>(
+      onCancel: () async {
+        for (final sub in subscriptions) {
+          await sub.cancel();
+        }
+      },
+    );
+
+    () async {
+      try {
+        final serviceNames = await _pendingServiceNames(services);
+
+        if (serviceNames.isEmpty) {
+          if (!controller.isClosed) {
+            controller.add(const SyncProgress(
+              total: 0,
+              completed: 0,
+              currentService: null,
+              state: SyncState.idle,
+            ));
+          }
+          await controller.close();
+          return;
+        }
+
+        final totalsByService = await _pendingCounts(serviceNames);
+        final total = totalsByService.values.fold<int>(0, (a, b) => a + b);
+
+        if (total == 0) {
+          if (!controller.isClosed) {
+            controller.add(const SyncProgress(
+              total: 0,
+              completed: 0,
+              currentService: null,
+              state: SyncState.completed,
+            ));
+          }
+          await controller.close();
+          return;
+        }
+
+        if (!controller.isClosed) {
+          controller.add(SyncProgress(
+            total: total,
+            completed: 0,
+            currentService: null,
+            state: SyncState.started,
+          ));
+        }
+
+        final completedByService = <String, int>{};
+        final futures = <Future<void>>[];
+        var hadError = false;
+
+        for (final entry in totalsByService.entries) {
+          final serviceName = entry.key;
+          final serviceTotal = entry.value;
+          if (serviceTotal == 0) continue;
+
+          completedByService[serviceName] = 0;
+          final completer = Completer<void>();
+          final stream = collection(serviceName).retryLocal();
+          final sub = stream.listen(
+            (event) {
+              if (event == null) return;
+              completedByService[serviceName] = event.current;
+              final completed = completedByService.values
+                  .fold<int>(0, (a, b) => a + b);
+              if (!controller.isClosed) {
+                controller.add(SyncProgress(
+                  total: total,
+                  completed: completed,
+                  currentService: serviceName,
+                  state: SyncState.inProgress,
+                ));
+              }
+            },
+            onError: (e) {
+              hadError = true;
+              final completed = completedByService.values
+                  .fold<int>(0, (a, b) => a + b);
+              if (!controller.isClosed) {
+                controller.add(SyncProgress(
+                  total: total,
+                  completed: completed,
+                  currentService: serviceName,
+                  state: SyncState.error,
+                  error: e,
+                ));
+              }
+              if (!completer.isCompleted) {
+                completer.complete();
+              }
+            },
+            onDone: () {
+              if (!completer.isCompleted) {
+                completer.complete();
+              }
+            },
+          );
+          subscriptions.add(sub);
+          futures.add(completer.future);
+        }
+
+        await Future.wait(futures);
+
+        if (!hadError) {
+          final completed =
+              completedByService.values.fold<int>(0, (a, b) => a + b);
+          if (!controller.isClosed) {
+            controller.add(SyncProgress(
+              total: total,
+              completed: completed,
+              currentService: null,
+              state: SyncState.completed,
+            ));
+          }
+        }
+
+        await controller.close();
+      } catch (e) {
+        if (!controller.isClosed) {
+          controller.add(SyncProgress(
+            total: 0,
+            completed: 0,
+            currentService: null,
+            state: SyncState.error,
+            error: e,
+          ));
+        }
+        await controller.close();
+      }
+    }();
+
+    return controller.stream;
+  }
+
+  Future<List<String>> _pendingServiceNames(List<String>? services) async {
+    final pendingServicesQuery = await db
+        .customSelect("SELECT DISTINCT service FROM services WHERE "
+            "json_extract(data, '\$.synced') = 0 AND "
+            "(json_extract(data, '\$.noSync') IS NULL OR json_extract(data, '\$.noSync') = 0)")
+        .get();
+
+    final serviceNames = <String>[];
+    for (final row in pendingServicesQuery) {
+      final serviceName = row.read<String>('service');
+      if (serviceName == 'schema') continue;
+      if (services != null && !services.contains(serviceName)) continue;
+      serviceNames.add(serviceName);
+    }
+    return serviceNames;
+  }
+
+  Future<Map<String, int>> _pendingCounts(List<String> services) async {
+    final totalsByService = <String, int>{};
+    for (final serviceName in services) {
+      final count = await collection(serviceName).pending().get();
+      totalsByService[serviceName] = count.length;
+    }
+    return totalsByService;
+  }
+
   /// Runs maintenance tasks to clean up expired cached data.
   ///
   /// This method removes:
@@ -478,4 +654,36 @@ class MaintenanceResult {
   @override
   String toString() =>
       'MaintenanceResult(records: $deletedRecords, responses: $deletedResponses, files: $deletedFiles, total: $totalDeleted)';
+}
+
+enum SyncState {
+  idle,
+  started,
+  inProgress,
+  completed,
+  error,
+}
+
+class SyncProgress {
+  const SyncProgress({
+    required this.total,
+    required this.completed,
+    required this.currentService,
+    required this.state,
+    this.error,
+  });
+
+  final int total;
+  final int completed;
+  final String? currentService;
+  final SyncState state;
+  final Object? error;
+
+  double get percent => total == 0 ? 0 : completed / total;
+
+  bool get isDone => state == SyncState.completed;
+
+  @override
+  String toString() =>
+      'SyncProgress(total: $total, completed: $completed, percent: ${percent.toStringAsFixed(2)}, state: $state, currentService: $currentService)';
 }
