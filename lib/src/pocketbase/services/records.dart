@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:drift/drift.dart';
+import 'package:http/http.dart' as http;
 
 import '../../../pocketbase_drift.dart';
 
@@ -49,6 +50,15 @@ class $RecordService extends RecordService with ServiceMixin<RecordModel> {
       return;
     }
 
+    // Get the collection schema to identify file fields
+    final collection =
+        await client.db.$collections(service: service).getSingleOrNull();
+    final fileFieldNames = collection?.fields
+            .where((f) => f.type == 'file')
+            .map((f) => f.name)
+            .toList() ??
+        [];
+
     for (var i = 0; i < total; i++) {
       final item = items[i];
       try {
@@ -77,26 +87,51 @@ class $RecordService extends RecordService with ServiceMixin<RecordModel> {
           createBody.remove('synced');
           createBody.remove('isNew');
           createBody.remove('deleted');
+          createBody.remove('noSync');
+
+          // Get cached files for this record
+          final files =
+              await _getFilesForSync(tempId, item.data, fileFieldNames);
+
+          // Also remove file field names from body since they'll be sent as multipart files
+          // (The server generates new filenames anyway)
+          for (final fieldName in fileFieldNames) {
+            createBody.remove(fieldName);
+          }
 
           // Create the record on the server with our local ID.
           await create(
             body: createBody,
+            files: files,
             requestPolicy: RequestPolicy.cacheAndNetwork,
             query: query,
             headers: headers,
           );
-          client.logger.fine('Successfully synced new item with ID ${item.id}');
+          client.logger.fine(
+              'Successfully synced new item with ID ${item.id} (${files.length} files)');
 
           // The record was an existing one that was updated offline.
         } else {
+          // Get cached files for this record
+          final files =
+              await _getFilesForSync(tempId, item.data, fileFieldNames);
+
+          // Prepare update body - don't include file field names
+          final updateBody = Map<String, dynamic>.from(item.toJson());
+          for (final fieldName in fileFieldNames) {
+            updateBody.remove(fieldName);
+          }
+
           await update(
             tempId,
-            body: item.toJson(),
+            body: updateBody,
+            files: files,
             requestPolicy: RequestPolicy.cacheAndNetwork,
             query: query,
             headers: headers,
           );
-          client.logger.fine('Successfully synced update for item $tempId');
+          client.logger.fine(
+              'Successfully synced update for item $tempId (${files.length} files)');
         }
       } catch (e) {
         client.logger
@@ -107,6 +142,64 @@ class $RecordService extends RecordService with ServiceMixin<RecordModel> {
     }
 
     client.logger.info('Completed retry for service: $service');
+  }
+
+  /// Retrieves cached file blobs for a record and converts them to MultipartFile.
+  ///
+  /// This method looks at the file field values in the record data to determine
+  /// which files need to be synced, then fetches them from the local blob cache.
+  Future<List<http.MultipartFile>> _getFilesForSync(
+    String recordId,
+    Map<String, dynamic> recordData,
+    List<String> fileFieldNames,
+  ) async {
+    final files = <http.MultipartFile>[];
+
+    if (fileFieldNames.isEmpty) return files;
+
+    // Get all cached files for this record
+    final cachedFiles = await client.db.getFilesForRecord(recordId).get();
+    if (cachedFiles.isEmpty) return files;
+
+    // Create a map for quick lookup by filename
+    final fileByName = {for (final f in cachedFiles) f.filename: f};
+
+    for (final fieldName in fileFieldNames) {
+      final dynamic fieldValue = recordData[fieldName];
+      if (fieldValue == null) continue;
+
+      // Handle single file field
+      if (fieldValue is String && fieldValue.isNotEmpty) {
+        final cachedFile = fileByName[fieldValue];
+        if (cachedFile != null) {
+          files.add(http.MultipartFile.fromBytes(
+            fieldName,
+            cachedFile.data,
+            filename: cachedFile.filename,
+          ));
+          client.logger.fine(
+              'Including file "${cachedFile.filename}" for field "$fieldName" in sync');
+        }
+      }
+      // Handle multi-file field
+      else if (fieldValue is List) {
+        for (final filename in fieldValue.whereType<String>()) {
+          if (filename.isEmpty) continue;
+          final cachedFile = fileByName[filename];
+          if (cachedFile != null) {
+            files.add(http.MultipartFile.fromBytes(
+              fieldName,
+              cachedFile.data,
+              filename: cachedFile.filename,
+            ));
+            client.logger.fine(
+                'Including file "${cachedFile.filename}" for field "$fieldName" in sync');
+          }
+        }
+      }
+    }
+
+    return files;
   }
 
   @override

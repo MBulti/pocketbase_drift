@@ -820,6 +820,14 @@ class DataBase extends _$DataBase {
     await q.go();
   }
 
+  /// Returns all cached file blobs for a given record.
+  ///
+  /// This is useful for syncing files when a record created offline
+  /// needs to be uploaded to the server.
+  Selectable<BlobFile> getFilesForRecord(String recordId) {
+    return select(blobFiles)..where((tbl) => tbl.recordId.equals(recordId));
+  }
+
   /// Intelligently merges a list of items into the local database for a given service.
   ///
   /// This method is more efficient than `setLocal` for list updates because it

@@ -3,6 +3,7 @@ import 'dart:io' as io;
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
 import 'package:logging/logging.dart';
 import 'package:pocketbase_drift/pocketbase_drift.dart';
 
@@ -234,6 +235,71 @@ void main() {
           requestPolicy: RequestPolicy.cacheOnly);
       expect(finalLocalRecord.data['name'], 'offline_final_state');
       expect(finalLocalRecord.data['synced'], true);
+    });
+
+    test('should sync files created offline when connectivity is restored',
+        () async {
+      final ultimateService = await client.$collection('ultimate');
+      final serverUltimate = serverClient.collection('ultimate');
+
+      // Go offline
+      await setConnectivity(false);
+      expect(client.connectivity.isConnected, isFalse);
+
+      // Create a record with a file while offline
+      const testFileName = 'sync_test_file.txt';
+      const testFileContent = 'This file was created offline and should sync!';
+      final fileBytes = Uint8List.fromList(testFileContent.codeUnits);
+
+      final testFile = http.MultipartFile.fromBytes(
+        'file_single',
+        fileBytes,
+        filename: testFileName,
+      );
+
+      final offlineRecord = await ultimateService.create(
+        body: {'plain_text': 'record_with_file_for_sync'},
+        files: [testFile],
+        requestPolicy: RequestPolicy.cacheAndNetwork,
+      );
+
+      // Verify record was created locally with file
+      expect(offlineRecord.data['file_single'], isNotNull);
+      expect(offlineRecord.data['file_single'], testFileName);
+
+      // Verify file blob was cached
+      final cachedFile = await client.db
+          .getFile(offlineRecord.id, testFileName)
+          .getSingleOrNull();
+      expect(cachedFile, isNotNull,
+          reason: 'File blob should be cached when created offline');
+
+      // Verify record is pending
+      final pendingRecords = await ultimateService.pending().get();
+      expect(pendingRecords.length, 1);
+
+      // Restore connectivity and sync
+      await setConnectivity(true);
+      expect(client.connectivity.isConnected, isTrue);
+      await Future.delayed(Duration.zero);
+      await client.syncCompleted;
+
+      // Verify record was synced to server
+      final serverRecord = await serverUltimate.getOne(offlineRecord.id);
+      expect(serverRecord, isNotNull);
+      expect(serverRecord.data['plain_text'], 'record_with_file_for_sync');
+
+      // Verify file was uploaded (server renamed it)
+      final serverFileName = serverRecord.data['file_single'] as String?;
+      expect(serverFileName, isNotNull,
+          reason: 'File should be uploaded to server');
+      expect(serverFileName, isNotEmpty);
+      expect(serverFileName, startsWith('sync_test_file_'),
+          reason: 'Server should rename file with unique suffix');
+
+      // Clean up
+      await serverUltimate.delete(offlineRecord.id);
+      await client.db.deleteAll('ultimate');
     });
   });
 }
