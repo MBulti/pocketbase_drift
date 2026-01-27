@@ -738,6 +738,12 @@ mixin ServiceMixin<M extends Jsonable> on BaseCrudService<M> {
     final localId = body['id'] as String? ?? newId();
     recordDataForCache['id'] = localId;
 
+    // Prepare filenames for cache-only storage upfront.
+    // This ensures file field names are saved even when offline.
+    if (bufferedFiles.isNotEmpty) {
+      await _prepareCacheOnlyBody(recordDataForCache, bufferedFiles);
+    }
+
     // Try network if connected
     if (client.connectivity.isConnected) {
       try {
@@ -1076,6 +1082,12 @@ mixin ServiceMixin<M extends Jsonable> on BaseCrudService<M> {
     Map<String, dynamic> recordDataForCache = Map.from(body);
     M? result;
     bool savedToNetwork = false;
+
+    // Prepare filenames for cache-only storage upfront.
+    // This ensures file field names are saved even when offline.
+    if (bufferedFiles.isNotEmpty) {
+      await _prepareCacheOnlyBody(recordDataForCache, bufferedFiles);
+    }
 
     // Try network if connected
     if (client.connectivity.isConnected) {

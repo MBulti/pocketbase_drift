@@ -211,5 +211,150 @@ void main() {
           reason:
               "File blob should be deleted from cache when the record is deleted.");
     });
+
+    group('offline scenarios (network failure simulation)', () {
+      late $PocketBase offlineClient;
+      late $RecordService offlineUltimateService;
+
+      setUp(() async {
+        SharedPreferences.setMockInitialValues({});
+        // Create a client with a failing HTTP client to simulate network unreachable
+        offlineClient = $PocketBase.database(
+          'http://127.0.0.1:8888',
+          authStore: $AuthStore.prefs(
+              await SharedPreferences.getInstance(), 'pb_auth_offline'),
+          connection: DatabaseConnection(NativeDatabase.memory()),
+          inMemory: true,
+          httpClientFactory: () => _FailingHttpClient(),
+        );
+        offlineClient.logging = true;
+
+        await offlineClient.db
+            .setSchema(collections.map((e) => e.toJson()).toList());
+        offlineUltimateService = await offlineClient.$collection('ultimate');
+      });
+
+      tearDown(() async {
+        await offlineClient.db.deleteAll(offlineUltimateService.service);
+      });
+
+      test(
+          'cacheAndNetwork with network failure: file field name and blob are saved correctly',
+          () async {
+        const testFileName = 'offline_test.txt';
+        const testFileContent = 'Offline file content!';
+        final testFile =
+            _createDummyFile('file_single', testFileName, testFileContent);
+
+        // Create while network fails using cacheAndNetwork policy
+        final createdItem = await offlineUltimateService.create(
+          body: {'plain_text': 'offline_record_with_file'},
+          files: [testFile],
+          requestPolicy: RequestPolicy.cacheAndNetwork,
+        );
+
+        // Verify the file field name is saved correctly (not null or empty)
+        expect(createdItem.data['file_single'], isNotNull,
+            reason: 'File field should not be null when created offline');
+        expect(createdItem.data['file_single'], isNotEmpty,
+            reason: 'File field should not be empty when created offline');
+        expect(createdItem.data['file_single'], testFileName,
+            reason: 'File field should contain the original filename');
+
+        // Verify the record can be retrieved with the correct filename
+        final cachedRecord = await offlineUltimateService.getOneOrNull(
+            createdItem.id,
+            requestPolicy: RequestPolicy.cacheOnly);
+        expect(cachedRecord, isNotNull);
+        expect(cachedRecord!.data['file_single'], testFileName);
+
+        // Verify the file blob was cached
+        final cachedFile = await offlineClient.db
+            .getFile(createdItem.id, testFileName)
+            .getSingleOrNull();
+        expect(cachedFile, isNotNull,
+            reason: 'File blob should be cached when created offline');
+        expect(utf8.decode(cachedFile!.data), testFileContent);
+      });
+
+      test(
+          'cacheAndNetwork with network failure: update with file saves field name correctly',
+          () async {
+        // First create a record
+        final initialItem = await offlineUltimateService.create(
+          body: {'plain_text': 'initial_for_offline_update'},
+          requestPolicy: RequestPolicy.cacheAndNetwork,
+        );
+
+        const updatedFileName = 'offline_updated.txt';
+        const updatedFileContent = 'Updated offline content!';
+
+        // Update with a file while network fails
+        final updatedItem = await offlineUltimateService.update(
+          initialItem.id,
+          body: {'plain_text': 'updated_offline_record'},
+          files: [
+            _createDummyFile('file_single', updatedFileName, updatedFileContent)
+          ],
+          requestPolicy: RequestPolicy.cacheAndNetwork,
+        );
+
+        // Verify the file field name is saved correctly
+        expect(updatedItem.data['file_single'], isNotNull,
+            reason: 'File field should not be null after offline update');
+        expect(updatedItem.data['file_single'], updatedFileName,
+            reason: 'File field should contain the updated filename');
+
+        // Verify the file blob was cached
+        final cachedFile = await offlineClient.db
+            .getFile(initialItem.id, updatedFileName)
+            .getSingleOrNull();
+        expect(cachedFile, isNotNull,
+            reason: 'File blob should be cached after offline update');
+        expect(utf8.decode(cachedFile!.data), updatedFileContent);
+      });
+
+      test(
+          'cacheAndNetwork with network failure: multiple files are saved correctly',
+          () async {
+        const testFile1Name = 'offline_multi_1.txt';
+        const testFile2Name = 'offline_multi_2.txt';
+        const testFile1Content = 'Offline multi 1';
+        const testFile2Content = 'Offline multi 2';
+
+        final createdItem = await offlineUltimateService.create(
+          body: {'plain_text': 'offline_record_with_multi_files'},
+          files: [
+            _createDummyFile('file_multi', testFile1Name, testFile1Content),
+            _createDummyFile('file_multi', testFile2Name, testFile2Content),
+          ],
+          requestPolicy: RequestPolicy.cacheAndNetwork,
+        );
+
+        final returnedFilenames = createdItem.data['file_multi'] as List;
+        expect(returnedFilenames.length, 2);
+        expect(returnedFilenames, containsAll([testFile1Name, testFile2Name]));
+
+        // Verify both file blobs were cached
+        final cachedFile1 = await offlineClient.db
+            .getFile(createdItem.id, testFile1Name)
+            .getSingleOrNull();
+        final cachedFile2 = await offlineClient.db
+            .getFile(createdItem.id, testFile2Name)
+            .getSingleOrNull();
+        expect(cachedFile1, isNotNull);
+        expect(cachedFile2, isNotNull);
+        expect(utf8.decode(cachedFile1!.data), testFile1Content);
+        expect(utf8.decode(cachedFile2!.data), testFile2Content);
+      });
+    });
   });
+}
+
+/// A mock HTTP client that always throws an exception to simulate network failure.
+class _FailingHttpClient extends http.BaseClient {
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) {
+    throw io.SocketException('Simulated network failure');
+  }
 }

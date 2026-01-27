@@ -20,28 +20,18 @@ class DataBase extends _$DataBase {
 
   late final Logger logger;
 
-  /// Extracts the 'updated' timestamp from a record, with fallback to 'updatedAt'.
-  ///
-  /// Some PocketBase applications use 'updatedAt' instead of the default 'updated'
-  /// field name. This helper ensures compatibility with both conventions.
-  static String? _getUpdatedTimestamp(Map<String, dynamic> data) {
+  /// Extracts the 'updated' timestamp from a record
+  static String _getUpdatedTimestamp(Map<String, dynamic> data) {
     final updated = data['updated'];
     if (updated is String && updated.isNotEmpty) return updated;
-    final updatedAt = data['updatedAt'];
-    if (updatedAt is String && updatedAt.isNotEmpty) return updatedAt;
-    return null;
+    return DateTime.now().toUtc().toIso8601String().replaceFirst('T', ' ');
   }
 
-  /// Extracts the 'created' timestamp from a record, with fallback to 'createdAt'.
-  ///
-  /// Some PocketBase applications use 'createdAt' instead of the default 'created'
-  /// field name. This helper ensures compatibility with both conventions.
-  static String? _getCreatedTimestamp(Map<String, dynamic> data) {
+  /// Extracts the 'created' timestamp from a record
+  static String _getCreatedTimestamp(Map<String, dynamic> data) {
     final created = data['created'];
     if (created is String && created.isNotEmpty) return created;
-    final createdAt = data['createdAt'];
-    if (createdAt is String && createdAt.isNotEmpty) return createdAt;
-    return null;
+    return DateTime.now().toUtc().toIso8601String().replaceFirst('T', ' ');
   }
 
   @override
@@ -496,10 +486,8 @@ class DataBase extends _$DataBase {
       validateData(collection, mutableData);
     }
 
-    final String created =
-        _getCreatedTimestamp(data) ?? DateTime.now().toIso8601String();
-    final String updated =
-        _getUpdatedTimestamp(data) ?? DateTime.now().toIso8601String();
+    final String created = _getCreatedTimestamp(data);
+    final String updated = _getUpdatedTimestamp(data);
 
     final item = ServicesCompanion.insert(
       id: id != null ? Value(id) : const Value.absent(),
@@ -604,10 +592,8 @@ class DataBase extends _$DataBase {
           final recordId = recordToSave['id'] as String?;
           if (recordId == null) continue;
 
-          final created = _getCreatedTimestamp(recordToSave) ??
-              DateTime.now().toIso8601String();
-          final updated = _getUpdatedTimestamp(recordToSave) ??
-              DateTime.now().toIso8601String();
+          final created = _getCreatedTimestamp(recordToSave);
+          final updated = _getUpdatedTimestamp(recordToSave);
 
           final item = ServicesCompanion.insert(
             id: Value(recordId),
@@ -773,8 +759,8 @@ class DataBase extends _$DataBase {
           id: Value(id),
           data: item,
           service: service,
-          created: Value(createdStr ?? DateTime.now().toIso8601String()),
-          updated: Value(updatedStr ?? DateTime.now().toIso8601String()),
+          created: Value(createdStr),
+          updated: Value(updatedStr),
         );
         b.insert(
           services,
@@ -884,11 +870,8 @@ class DataBase extends _$DataBase {
       } else {
         // It's an existing record, check if it's updated.
         final networkUpdatedStr = _getUpdatedTimestamp(item);
-        final networkUpdated = networkUpdatedStr != null
-            ? DateTime.tryParse(networkUpdatedStr)
-            : null;
-        final localUpdated =
-            DateTime.tryParse(localRecord['updated'] as String? ?? '');
+        final networkUpdated = DateTime.tryParse(networkUpdatedStr);
+        final localUpdated = DateTime.tryParse(localRecord['updated']);
 
         if (networkUpdated != null &&
             localUpdated != null &&
@@ -921,8 +904,8 @@ class DataBase extends _$DataBase {
           id: Value(id),
           data: item,
           service: service,
-          created: Value(createdStr ?? DateTime.now().toIso8601String()),
-          updated: Value(updatedStr ?? DateTime.now().toIso8601String()),
+          created: Value(createdStr),
+          updated: Value(updatedStr),
         );
         b.insert(services, row, onConflict: DoUpdate((old) => row));
       }

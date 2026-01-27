@@ -24,6 +24,7 @@ class PocketBaseImageProvider extends ImageProvider<PocketBaseImageProvider> {
     this.expireAfter,
     this.token,
     this.autoGenerateToken = false,
+    this.requestPolicy = RequestPolicy.cacheAndNetwork,
   });
 
   final $PocketBase client;
@@ -38,6 +39,7 @@ class PocketBaseImageProvider extends ImageProvider<PocketBaseImageProvider> {
   final Duration? expireAfter;
   final String? token;
   final bool autoGenerateToken;
+  final RequestPolicy requestPolicy;
 
   @override
   ImageStreamCompleter loadImage(
@@ -96,6 +98,7 @@ class PocketBaseImageProvider extends ImageProvider<PocketBaseImageProvider> {
         token: token,
         autoGenerateToken: autoGenerateToken,
         size: size,
+        requestPolicy: requestPolicy,
       ),
     );
   }
@@ -113,7 +116,7 @@ class PocketBaseImageProvider extends ImageProvider<PocketBaseImageProvider> {
       filename: filename,
       token: token,
       autoGenerateToken: autoGenerateToken,
-      requestPolicy: RequestPolicy.cacheAndNetwork,
+      requestPolicy: requestPolicy,
       expireAfter: expireAfter,
     );
   }
