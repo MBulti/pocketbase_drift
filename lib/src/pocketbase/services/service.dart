@@ -839,6 +839,17 @@ mixin ServiceMixin<M extends Jsonable> on BaseCrudService<M> {
     String? expand,
     String? fields,
   }) async {
+    // Validate that ID is not empty - calling update with an empty ID
+    // would cause unpredictable behavior (server errors or creating new records).
+    if (id.isEmpty) {
+      throw ArgumentError.value(
+        id,
+        'id',
+        'Cannot update a record with an empty ID in collection "$service". '
+            'Ensure you have a valid record ID before calling update().',
+      );
+    }
+
     final policy = resolvePolicy(requestPolicy);
     return switch (policy) {
       RequestPolicy.cacheOnly =>

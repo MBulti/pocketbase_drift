@@ -625,6 +625,17 @@ class DataBase extends _$DataBase {
     Map<String, dynamic> data, {
     bool validate = true,
   }) async {
+    // Validate that ID is not empty - calling update with an empty ID
+    // would silently create a new record, which is almost never intended.
+    if (id.isEmpty) {
+      throw ArgumentError.value(
+        id,
+        'id',
+        'Cannot update a record with an empty ID in service "$service". '
+            'This would create a new record instead of updating. '
+            'If you intended to create a new record, use \$create() instead.',
+      );
+    }
     // For updates with validation enabled, we need to merge with existing data
     // to ensure all required fields are present during validation
     if (validate && service != 'schema') {
