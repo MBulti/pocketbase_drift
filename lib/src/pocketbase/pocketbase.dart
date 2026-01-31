@@ -84,9 +84,34 @@ class $PocketBase extends PocketBase with WidgetsBindingObserver {
   /// ```
   final RequestPolicy requestPolicy;
 
+  StreamSubscription<LogRecord>? _logSubscription;
+
   set logging(bool enable) {
     hierarchicalLoggingEnabled = true;
     logger.level = enable ? Level.ALL : Level.OFF;
+
+    if (enable) {
+      // Only set up the listener if not already listening
+      _logSubscription ??= Logger.root.onRecord.listen((record) {
+        // Only print logs from this package's loggers
+        if (record.loggerName.startsWith('PocketBaseDrift')) {
+          // ignore: avoid_print
+          print(
+              '[${record.level.name}] ${record.loggerName}: ${record.message}');
+          if (record.error != null) {
+            // ignore: avoid_print
+            print('  Error: ${record.error}');
+          }
+          if (record.stackTrace != null) {
+            // ignore: avoid_print
+            print('  Stack: ${record.stackTrace}');
+          }
+        }
+      });
+    } else {
+      _logSubscription?.cancel();
+      _logSubscription = null;
+    }
   }
 
   StreamSubscription? _connectivitySubscription;
@@ -430,6 +455,7 @@ class $PocketBase extends PocketBase with WidgetsBindingObserver {
   void close() {
     WidgetsBinding.instance.removeObserver(this);
     _connectivitySubscription?.cancel();
+    _logSubscription?.cancel();
     db.close();
     super.close();
   }
