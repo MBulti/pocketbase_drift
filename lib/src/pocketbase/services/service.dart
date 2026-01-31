@@ -147,7 +147,7 @@ mixin ServiceMixin<M extends Jsonable> on BaseCrudService<M> {
 
   @override
   Future<List<M>> getFullList({
-    int batch = 200,
+    int batch = 1000,
     String? expand,
     String? filter,
     String? sort,
