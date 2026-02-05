@@ -303,7 +303,7 @@ class $BatchService {
     Map<String, dynamic> query,
     Map<String, String> headers,
   ) async {
-    if (!client.connectivity.isConnected) {
+    if (!client.connectivity.shouldAttemptNetwork) {
       throw Exception(
           'Device is offline and RequestPolicy.networkOnly was requested for batch send.');
     }
@@ -344,7 +344,7 @@ class $BatchService {
     Map<String, dynamic> query,
     Map<String, String> headers,
   ) async {
-    if (!client.connectivity.isConnected) {
+    if (!client.connectivity.shouldAttemptNetwork) {
       throw Exception(
           'Device is offline and RequestPolicy.networkFirst was requested for batch send.');
     }
@@ -387,7 +387,7 @@ class $BatchService {
     }
 
     // Try server in background if connected
-    if (client.connectivity.isConnected) {
+    if (client.connectivity.shouldAttemptNetwork) {
       _sendToServer(body, query, headers).then((serverResults) {
         _syncResultsToCache(serverResults);
       }).catchError((e) {
@@ -407,7 +407,7 @@ class $BatchService {
     Map<String, String> headers,
   ) async {
     // Try server if connected
-    if (client.connectivity.isConnected) {
+    if (client.connectivity.shouldAttemptNetwork) {
       try {
         final results = await _sendToServer(body, query, headers);
 

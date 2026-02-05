@@ -1,3 +1,22 @@
+## 0.3.14
+
+### Bug Fixes
+
+- **Fixed `clearAllData()` also clearing the schema cache** - The `clearAllData()` method was incorrectly deleting all records from the `services` table, including the cached collection schema (stored with `service = 'schema'`). This caused issues when the app tried to use schema-dependent features after clearing user data. The method now preserves schema records while clearing all other data.
+
+- **Improved connectivity restoration detection** - The `connectivity_plus` package doesn't reliably detect when network connectivity is restored, especially on iOS Simulator. The connectivity service now uses a hybrid approach:
+  - **Platform detection**: Uses `connectivity_plus` for detecting when the device goes offline
+  - **Request-based detection**: Network request success/failure is now reported to the connectivity service
+  - When a network request succeeds after being marked offline, connectivity is immediately restored
+  - After 2 consecutive network failures, the device is marked as offline
+  - Explicit `checkConnectivity()` calls (e.g., on app resume) trust the platform status directly
+
+### Improvements
+
+- Added `shouldAttemptNetwork` getter to `ConnectivityService` - Returns `true` if the platform reports a network interface is available, regardless of recent request success. Use this for deciding whether to TRY a network request. Use `isConnected` for UI display or pessimistic decisions.
+- Added `reportNetworkSuccess()` and `reportNetworkFailure()` methods to `ConnectivityService` for request-based connectivity tracking
+- All network request decisions now use `shouldAttemptNetwork` instead of `isConnected`, allowing the app to discover connectivity restoration by actually trying requests when the platform reports a network interface is available
+
 ## 0.3.13
 
 ### Bug Fixes

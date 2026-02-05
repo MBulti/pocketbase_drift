@@ -1,6 +1,6 @@
 name: pocketbase_drift
 description: A powerful, offline-first PocketBase client backed by a drift database.
-version: 0.3.13
+version: 0.3.14
 repository: https://github.com/DrDejaVuNG/pocketbase_drift
 issue_tracker: https://github.com/DrDejaVuNG/pocketbase_drift/issues
 
@@ -15,7 +15,7 @@ dependencies:
   logging: ^1.3.0
   connectivity_plus: ^7.0.0
   pocketbase: ^0.23.2
-  drift: ^2.30.1
+  drift: ^2.31.0
   sqlite3_flutter_libs: ^0.5.41
   path_provider: ^2.1.5
   path: ^1.9.1
@@ -27,7 +27,7 @@ dev_dependencies:
     sdk: flutter
   flutter_lints: ^5.0.0
   build_runner: ^2.7.2
-  drift_dev: ^2.30.1
+  drift_dev: ^2.31.0
 
 flutter:
 

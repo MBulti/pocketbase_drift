@@ -5,14 +5,18 @@ import 'package:logging/logging.dart';
 
 /// A service that monitors the device's network connectivity status.
 ///
+/// This service uses a hybrid approach combining:
+/// 1. `connectivity_plus` for passive OS-level network interface monitoring
+/// 2. Request-based detection: actual network request success/failure
+///
 /// This is a singleton because `connectivity_plus`'s `Connectivity()` is also
-/// a global singleton. Disposing and recreating wrappers around it causes
-/// instability in connectivity detection. Each `$PocketBase` client manages
-/// its own subscription to this singleton's [statusStream].
+/// a global singleton. Each `$PocketBase` client manages its own subscription
+/// to this singleton's [statusStream].
 class ConnectivityService {
   ConnectivityService._() {
     _logger = Logger('ConnectivityService');
-    _subscription = Connectivity().onConnectivityChanged.listen(_updateStatus);
+    _subscription =
+        Connectivity().onConnectivityChanged.listen(_onPlatformStatusChange);
   }
 
   // Singleton instance - lives for the app's lifetime
@@ -25,12 +29,16 @@ class ConnectivityService {
   late StreamSubscription<List<ConnectivityResult>> _subscription;
   late final Logger _logger;
 
+  /// Counter for consecutive network failures.
+  int _consecutiveFailures = 0;
+
+  /// Number of consecutive failures before marking as offline.
+  static const _failureThreshold = 2;
+
   /// A stream that emits `true` if the device is connected to a network,
   /// and `false` otherwise. New listeners will immediately receive the current status.
   Stream<bool> get statusStream {
     // Emit the current status to new listeners immediately.
-    // Using Timer.run to ensure it's added asynchronously in the next microtask,
-    // allowing the listener to be fully set up.
     Timer.run(() {
       if (!_statusController.isClosed) {
         _statusController.add(isConnected);
@@ -42,17 +50,71 @@ class ConnectivityService {
   /// The current network connectivity status.
   bool isConnected = true;
 
+  /// Whether the platform reports a network interface is available.
+  bool _platformReportsConnected = true;
+
+  /// Whether a network request should be attempted.
+  ///
+  /// Returns `true` if the platform reports a network interface is available,
+  /// regardless of whether recent requests have succeeded. This allows discovery
+  /// of connectivity restoration by actually trying a request.
+  ///
+  /// Use this to decide whether to TRY a network request.
+  /// Use [isConnected] for UI display or queuing decisions.
+  bool get shouldAttemptNetwork => _platformReportsConnected;
+
   /// Checks the current connectivity and updates the status.
+  /// When called explicitly, trusts the platform status for both directions.
   Future<void> checkConnectivity() async {
     final result = await Connectivity().checkConnectivity();
-    _updateStatus(result);
+    final platformConnected = !result.contains(ConnectivityResult.none);
+    _platformReportsConnected = platformConnected;
+
+    // For explicit checks, trust the platform status
+    _setConnected(platformConnected);
   }
 
-  void _updateStatus(List<ConnectivityResult> result) {
-    // We consider the device connected if it's not 'none'.
-    final newStatus = !result.contains(ConnectivityResult.none);
-    if (newStatus != isConnected) {
-      isConnected = newStatus;
+  /// Called when the platform connectivity status changes.
+  void _onPlatformStatusChange(List<ConnectivityResult> result) {
+    final platformConnected = !result.contains(ConnectivityResult.none);
+    _platformReportsConnected = platformConnected;
+
+    if (!platformConnected) {
+      // Definitely offline - no network interface
+      _setConnected(false);
+    }
+    // Note: We don't automatically set connected=true here.
+    // We wait for an actual request to succeed to confirm connectivity.
+  }
+
+  /// Report that a network request failed.
+  /// After [_failureThreshold] consecutive failures, marks as offline.
+  void reportNetworkFailure() {
+    _consecutiveFailures++;
+    _logger.fine(
+        'Network failure reported ($_consecutiveFailures consecutive failures)');
+
+    if (_consecutiveFailures >= _failureThreshold && isConnected) {
+      _logger.info('Multiple network failures detected, marking as offline.');
+      _setConnected(false);
+    }
+  }
+
+  /// Report that a network request succeeded.
+  /// This confirms connectivity is working and resets failure counter.
+  void reportNetworkSuccess() {
+    _consecutiveFailures = 0;
+
+    if (!isConnected && _platformReportsConnected) {
+      _logger.info('Network request succeeded - connectivity restored.');
+      _setConnected(true);
+    }
+  }
+
+  void _setConnected(bool value) {
+    if (value != isConnected) {
+      isConnected = value;
+      _consecutiveFailures = 0; // Reset on any state change
       if (!_statusController.isClosed) {
         _statusController.add(isConnected);
       }
@@ -61,11 +123,12 @@ class ConnectivityService {
   }
 
   /// Resets the connectivity stream subscription.
-  /// Useful when the app resumes from background or after a hot restart
-  /// to ensure the stream is not stale.
+  /// Useful when the app resumes from background or after a hot restart.
   void resetSubscription() {
     _logger.info('Resetting connectivity stream subscription.');
     _subscription.cancel();
-    _subscription = Connectivity().onConnectivityChanged.listen(_updateStatus);
+    _subscription =
+        Connectivity().onConnectivityChanged.listen(_onPlatformStatusChange);
+    checkConnectivity();
   }
 }

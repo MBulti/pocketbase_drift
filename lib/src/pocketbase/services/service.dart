@@ -518,7 +518,7 @@ mixin ServiceMixin<M extends Jsonable> on BaseCrudService<M> {
     String? expand,
     String? fields,
   ) async {
-    if (!client.connectivity.isConnected) {
+    if (!client.connectivity.shouldAttemptNetwork) {
       throw Exception(
           'Device is offline and RequestPolicy.networkOnly was requested for create in $service.');
     }
@@ -571,7 +571,7 @@ mixin ServiceMixin<M extends Jsonable> on BaseCrudService<M> {
     final result = itemFactoryFunc(localRecordData);
 
     // Try server in background
-    if (client.connectivity.isConnected) {
+    if (client.connectivity.shouldAttemptNetwork) {
       _tryCreateOnServer(body, query, bufferedFiles, headers, expand, fields,
               localRecordData['id'] as String)
           .catchError((e) {
@@ -658,7 +658,7 @@ mixin ServiceMixin<M extends Jsonable> on BaseCrudService<M> {
     String? expand,
     String? fields,
   ) async {
-    if (!client.connectivity.isConnected) {
+    if (!client.connectivity.shouldAttemptNetwork) {
       throw Exception(
           'Device is offline and RequestPolicy.networkFirst was requested for create in $service.');
     }
@@ -745,7 +745,7 @@ mixin ServiceMixin<M extends Jsonable> on BaseCrudService<M> {
     }
 
     // Try network if connected
-    if (client.connectivity.isConnected) {
+    if (client.connectivity.shouldAttemptNetwork) {
       try {
         // Include our local ID so the server uses it
         result = await super.create(
@@ -902,7 +902,7 @@ mixin ServiceMixin<M extends Jsonable> on BaseCrudService<M> {
     String? expand,
     String? fields,
   ) async {
-    if (!client.connectivity.isConnected) {
+    if (!client.connectivity.shouldAttemptNetwork) {
       throw Exception(
           'Device is offline and RequestPolicy.networkOnly was requested for update in $service.');
     }
@@ -954,7 +954,7 @@ mixin ServiceMixin<M extends Jsonable> on BaseCrudService<M> {
     final result = itemFactoryFunc(localRecordData);
 
     // Try server in background
-    if (client.connectivity.isConnected) {
+    if (client.connectivity.shouldAttemptNetwork) {
       _tryUpdateOnServer(
               id, body, query, bufferedFiles, headers, expand, fields)
           .catchError((e) {
@@ -1023,7 +1023,7 @@ mixin ServiceMixin<M extends Jsonable> on BaseCrudService<M> {
     String? expand,
     String? fields,
   ) async {
-    if (!client.connectivity.isConnected) {
+    if (!client.connectivity.shouldAttemptNetwork) {
       throw Exception(
           'Device is offline and RequestPolicy.networkFirst was requested for update in $service.');
     }
@@ -1101,7 +1101,7 @@ mixin ServiceMixin<M extends Jsonable> on BaseCrudService<M> {
     }
 
     // Try network if connected
-    if (client.connectivity.isConnected) {
+    if (client.connectivity.shouldAttemptNetwork) {
       try {
         result = await super.update(
           id,
@@ -1211,7 +1211,7 @@ mixin ServiceMixin<M extends Jsonable> on BaseCrudService<M> {
     Map<String, dynamic> query,
     Map<String, String> headers,
   ) async {
-    if (!client.connectivity.isConnected) {
+    if (!client.connectivity.shouldAttemptNetwork) {
       throw Exception(
           'Device is offline and RequestPolicy.networkOnly was requested for delete in $service.');
     }
@@ -1234,7 +1234,7 @@ mixin ServiceMixin<M extends Jsonable> on BaseCrudService<M> {
     await client.db.$delete(service, id);
 
     // Try server in background
-    if (client.connectivity.isConnected) {
+    if (client.connectivity.shouldAttemptNetwork) {
       super
           .delete(id, body: body, query: query, headers: headers)
           .catchError((e) {
@@ -1250,7 +1250,7 @@ mixin ServiceMixin<M extends Jsonable> on BaseCrudService<M> {
     Map<String, dynamic> query,
     Map<String, String> headers,
   ) async {
-    if (!client.connectivity.isConnected) {
+    if (!client.connectivity.shouldAttemptNetwork) {
       throw Exception(
           'Device is offline and RequestPolicy.networkFirst was requested for delete in $service.');
     }
@@ -1276,7 +1276,7 @@ mixin ServiceMixin<M extends Jsonable> on BaseCrudService<M> {
     bool saved = false;
 
     // Try network if connected
-    if (client.connectivity.isConnected) {
+    if (client.connectivity.shouldAttemptNetwork) {
       try {
         await super.delete(
           id,
@@ -1411,15 +1411,18 @@ extension RequestPolicyUtils on RequestPolicy {
     $PocketBase client,
     Future<T> Function() remote,
   ) async {
-    if (!client.connectivity.isConnected) {
+    if (!client.connectivity.shouldAttemptNetwork) {
       throw Exception(
           'Device is offline and RequestPolicy.networkOnly was requested for "$label".');
     }
 
     try {
       client.logger.finer('Fetching "$label" from network only...');
-      return await remote();
+      final result = await remote();
+      client.connectivity.reportNetworkSuccess();
+      return result;
     } catch (e) {
+      client.connectivity.reportNetworkFailure();
       client.logger.warning('Network fetch for "$label" failed.', e);
       rethrow;
     }
@@ -1444,9 +1447,10 @@ extension RequestPolicyUtils on RequestPolicy {
     }
 
     // Then fetch from network in background to update cache
-    if (client.connectivity.isConnected) {
+    if (client.connectivity.shouldAttemptNetwork) {
       // Fire and forget - don't await
       remote().then((networkData) async {
+        client.connectivity.reportNetworkSuccess();
         try {
           await setLocal(networkData);
           client.logger.finer('Background update for "$label" completed.');
@@ -1455,6 +1459,7 @@ extension RequestPolicyUtils on RequestPolicy {
               .warning('Failed to update cache for "$label" in background.', e);
         }
       }).catchError((e) {
+        client.connectivity.reportNetworkFailure();
         client.logger.fine('Background network fetch for "$label" failed.', e);
       });
     }
@@ -1476,11 +1481,12 @@ extension RequestPolicyUtils on RequestPolicy {
   ) async {
     Object? error;
 
-    // Try network first if connected
-    if (client.connectivity.isConnected) {
+    // Try network first if platform reports a network interface is available
+    if (client.connectivity.shouldAttemptNetwork) {
       try {
         client.logger.finer('Fetching "$label" from network first...');
         final result = await remote();
+        client.connectivity.reportNetworkSuccess();
         // Update cache with network data
         try {
           await setLocal(result);
@@ -1490,12 +1496,13 @@ extension RequestPolicyUtils on RequestPolicy {
         }
         return result;
       } catch (e) {
+        client.connectivity.reportNetworkFailure();
         error = e;
         client.logger.warning('Network fetch for "$label" failed.', e);
       }
     } else {
       client.logger
-          .info('Device is offline. Skipping network request for "$label".');
+          .info('No network interface. Skipping network request for "$label".');
     }
 
     // Fallback to cache

@@ -1174,8 +1174,10 @@ class DataBase extends _$DataBase {
   }
 
   Future<void> clearAllData() async {
+    // Don't clear the schema
     await transaction(() async {
-      await delete(services).go();
+      await (delete(services)..where((r) => r.service.isNotValue('schema')))
+          .go();
       await delete(blobFiles).go();
       await delete(cachedResponses).go();
     });

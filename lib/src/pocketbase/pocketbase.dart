@@ -202,7 +202,7 @@ class $PocketBase extends PocketBase with WidgetsBindingObserver {
       connectivity.resetSubscription();
       // After resetting, the subscription will get the current state.
       // We can also trigger a proactive sync if online.
-      if (connectivity.isConnected) {
+      if (connectivity.shouldAttemptNetwork) {
         logger.info(
             'App resumed and online. Checking for pending changes to sync.');
         _retrySyncForAllServices();

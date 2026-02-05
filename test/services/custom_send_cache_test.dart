@@ -31,12 +31,17 @@ void main() {
         // ignore: avoid_print
         print('${record.level.name}: ${record.time}: ${record.message}');
       });
+    });
 
-      // Mock connectivity to report "online" by default
+    setUp(() async {
+      // Mock connectivity to report "online" before each test
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(
               const MethodChannel('dev.fluttercommunity.plus/connectivity'),
               (MethodCall methodCall) async => ['wifi']);
+
+      // Trigger a connectivity check to update the singleton's state
+      await ConnectivityService().checkConnectivity();
     });
 
     test(
