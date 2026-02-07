@@ -347,6 +347,29 @@ void main() {
         expect(utf8.decode(cachedFile1!.data), testFile1Content);
         expect(utf8.decode(cachedFile2!.data), testFile2Content);
       });
+
+      test('sync diagnostics exposes cached vs missing file state', () async {
+        const testFileName = 'diag_test.txt';
+        const testFileContent = 'diag-content';
+
+        final createdItem = await offlineUltimateService.create(
+          body: {'plain_text': 'offline_diag_record'},
+          files: [
+            _createDummyFile('file_single', testFileName, testFileContent)
+          ],
+          requestPolicy: RequestPolicy.cacheAndNetwork,
+        );
+
+        final diagnostics =
+            await offlineUltimateService.getSyncFileDiagnostics(createdItem.id);
+        expect(diagnostics, isNotNull);
+        expect(diagnostics!.resolvedFileFields, contains('file_single'));
+        expect(diagnostics.expectedFilenames, contains(testFileName));
+        expect(diagnostics.cachedFilenames, contains(testFileName));
+        expect(diagnostics.availableForSync, contains(testFileName));
+        expect(diagnostics.missingFromCache, isEmpty);
+        expect(diagnostics.isReadyForSync, isTrue);
+      });
     });
 
     group('file retrieval fallback behavior', () {

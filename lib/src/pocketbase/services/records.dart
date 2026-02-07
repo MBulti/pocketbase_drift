@@ -212,6 +212,61 @@ class $RecordService extends RecordService with ServiceMixin<RecordModel> {
     return files;
   }
 
+  /// Debug helper for offline file sync.
+  ///
+  /// Returns which file names are referenced by the local record, which blobs
+  /// exist in the local cache, and which are missing for a successful upload.
+  Future<SyncFileDiagnostics?> getSyncFileDiagnostics(
+    String recordId, {
+    Map<String, dynamic>? recordData,
+  }) async {
+    final localData = recordData ??
+        (await getOneOrNull(
+          recordId,
+          requestPolicy: RequestPolicy.cacheOnly,
+        ))
+            ?.toJson();
+    if (localData == null) return null;
+
+    final collection =
+        await client.db.$collections(service: service).getSingleOrNull();
+    final schemaFileFields = collection?.fields
+            .where((f) => f.type == 'file')
+            .map((f) => f.name)
+            .toList() ??
+        [];
+
+    final cachedFiles = await client.db.getFilesForRecord(recordId).get();
+    final resolvedFields = schemaFileFields.isNotEmpty
+        ? schemaFileFields
+        : _inferFileFieldNames(localData, cachedFiles);
+
+    final expected = <String>{};
+    for (final field in resolvedFields) {
+      final value = localData[field];
+      if (value is String && value.isNotEmpty) {
+        expected.add(value);
+      } else if (value is List) {
+        expected.addAll(value.whereType<String>().where((e) => e.isNotEmpty));
+      }
+    }
+
+    final cachedNames = cachedFiles.map((f) => f.filename).toSet();
+    final available = expected.where(cachedNames.contains).toList()..sort();
+    final missing = expected.where((f) => !cachedNames.contains(f)).toList()
+      ..sort();
+
+    return SyncFileDiagnostics(
+      recordId: recordId,
+      service: service,
+      resolvedFileFields: resolvedFields,
+      expectedFilenames: expected.toList()..sort(),
+      cachedFilenames: cachedNames.toList()..sort(),
+      availableForSync: available,
+      missingFromCache: missing,
+    );
+  }
+
   List<String> _inferFileFieldNames(
     Map<String, dynamic> recordData,
     List<BlobFile> cachedFiles,
@@ -392,4 +447,27 @@ class $RecordService extends RecordService with ServiceMixin<RecordModel> {
     controller.addStream(stream);
     return controller.stream;
   }
+}
+
+class SyncFileDiagnostics {
+  const SyncFileDiagnostics({
+    required this.recordId,
+    required this.service,
+    required this.resolvedFileFields,
+    required this.expectedFilenames,
+    required this.cachedFilenames,
+    required this.availableForSync,
+    required this.missingFromCache,
+  });
+
+  final String recordId;
+  final String service;
+  final List<String> resolvedFileFields;
+  final List<String> expectedFilenames;
+  final List<String> cachedFilenames;
+  final List<String> availableForSync;
+  final List<String> missingFromCache;
+
+  bool get isReadyForSync =>
+      expectedFilenames.isNotEmpty && missingFromCache.isEmpty;
 }
