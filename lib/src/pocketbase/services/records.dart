@@ -155,16 +155,26 @@ class $RecordService extends RecordService with ServiceMixin<RecordModel> {
   ) async {
     final files = <http.MultipartFile>[];
 
-    if (fileFieldNames.isEmpty) return files;
-
     // Get all cached files for this record
     final cachedFiles = await client.db.getFilesForRecord(recordId).get();
     if (cachedFiles.isEmpty) return files;
 
+    // If schema lookup failed or service was referenced differently (id vs name),
+    // infer candidate file fields from record payload values.
+    final effectiveFileFieldNames = fileFieldNames.isNotEmpty
+        ? fileFieldNames
+        : _inferFileFieldNames(recordData, cachedFiles);
+
+    if (effectiveFileFieldNames.isEmpty) {
+      client.logger.warning(
+          'No file fields resolved for $service/$recordId while ${cachedFiles.length} cached file blobs exist.');
+      return files;
+    }
+
     // Create a map for quick lookup by filename
     final fileByName = {for (final f in cachedFiles) f.filename: f};
 
-    for (final fieldName in fileFieldNames) {
+    for (final fieldName in effectiveFileFieldNames) {
       final dynamic fieldValue = recordData[fieldName];
       if (fieldValue == null) continue;
 
@@ -200,6 +210,32 @@ class $RecordService extends RecordService with ServiceMixin<RecordModel> {
     }
 
     return files;
+  }
+
+  List<String> _inferFileFieldNames(
+    Map<String, dynamic> recordData,
+    List<BlobFile> cachedFiles,
+  ) {
+    final cachedNames = cachedFiles.map((f) => f.filename).toSet();
+    final inferred = <String>{};
+
+    for (final entry in recordData.entries) {
+      final key = entry.key;
+      final value = entry.value;
+
+      if (value is String && cachedNames.contains(value)) {
+        inferred.add(key);
+      } else if (value is List) {
+        final hasMatch = value
+            .whereType<String>()
+            .any((filename) => cachedNames.contains(filename));
+        if (hasMatch) {
+          inferred.add(key);
+        }
+      }
+    }
+
+    return inferred.toList();
   }
 
   @override
